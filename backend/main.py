@@ -56,3 +56,37 @@ def get_orders():
     connection.close()
 
     return {"orders": orders_data}
+
+@app.get("/customers")
+def get_customers():
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT
+            customer_id,
+            name,
+            phone,
+            address,
+            pincode
+        FROM customers
+        ORDER BY customer_id DESC;
+    """)
+
+    customers = cursor.fetchall()
+
+    customers_data = []
+
+    for customer in customers:
+        customers_data.append({
+            "customer_id": customer[0],
+            "name": customer[1],
+            "phone": customer[2],
+            "address": customer[3],
+            "pincode": customer[4]
+        })
+
+    cursor.close()
+    connection.close()
+
+    return {"customers": customers_data}
