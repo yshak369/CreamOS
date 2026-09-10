@@ -90,3 +90,35 @@ def get_customers():
     connection.close()
 
     return {"customers": customers_data}
+
+@app.get("/products")
+def get_products():
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT
+            product_id,
+            name,
+            selling_price,
+            cost_price
+        FROM products
+        ORDER BY product_id DESC;
+    """)
+
+    products = cursor.fetchall()
+
+    products_data = []
+
+    for product in products:
+        products_data.append({
+            "product_id": product[0],
+            "name": product[1],
+            "selling_price": float(product[2]),
+            "cost_price": float(product[3])
+        })
+
+    cursor.close()
+    connection.close()
+
+    return {"products": products_data}
