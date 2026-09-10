@@ -123,36 +123,36 @@ def get_products():
 
     return {"products": products_data}
 
-@app.get("/payments")
-def get_payments():
+@app.get("/expenses")
+def get_expenses():
     connection = get_connection()
     cursor = connection.cursor()
 
     cursor.execute("""
         SELECT
-            payment_id,
-            order_id,
+            expense_id,
+            expense_date,
+            category,
             amount,
-            payment_method,
-            payment_status
-        FROM payments
-        ORDER BY payment_id DESC;
+            description
+        FROM expenses
+        ORDER BY expense_date DESC;
     """)
 
-    payments = cursor.fetchall()
+    expenses = cursor.fetchall()
 
-    payments_data = []
+    expenses_data = []
 
-    for payment in payments:
-        payments_data.append({
-            "payment_id": payment[0],
-            "order_id": payment[1],
-            "amount": float(payment[2]),
-            "payment_method": payment[3],
-            "payment_status": payment[4]
+    for expense in expenses:
+        expenses_data.append({
+            "expense_id": expense[0],
+            "expense_date": expense[1],
+            "category": expense[2],
+            "amount": float(expense[3]),
+            "description": expense[4]
         })
 
     cursor.close()
     connection.close()
 
-    return {"payments": payments_data}
+    return {"expenses": expenses_data}
