@@ -1,3 +1,4 @@
+from datetime import date
 from fastapi import FastAPI
 from .database import get_connection
 
@@ -321,7 +322,7 @@ def get_channel_profit():
     return {"channels": channels_data}
 
 @app.get("/analytics/daily")
-def get_daily_metrics():
+def get_daily_metrics(start_date: date = None, end_date: date = None):
     connection = get_connection()
     cursor = connection.cursor()
 
@@ -338,9 +339,13 @@ def get_daily_metrics():
         FROM orders o
         JOIN order_items oi
             ON o.order_id = oi.order_id
+        WHERE
+            (%s IS NULL OR DATE(o.order_date) >= %s)
+            AND
+            (%s IS NULL OR DATE(o.order_date) <= %s)
         GROUP BY DATE(o.order_date)
         ORDER BY date DESC;
-    """)
+    """, (start_date, start_date, end_date, end_date))
 
     results = cursor.fetchall()
 
