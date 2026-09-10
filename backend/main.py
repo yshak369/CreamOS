@@ -273,3 +273,49 @@ def get_channel_metrics():
     connection.close()
 
     return {"channels": channels_data}
+
+@app.get("/analytics/channel-profit")
+def get_channel_profit():
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT
+            o.source,
+            COUNT(DISTINCT o.order_id) AS total_orders,
+            COALESCE(SUM((oi.quantity * oi.unit_price) - oi.discount_amount), 0) AS revenue,
+            COALESCE(SUM(oi.quantity * oi.unit_cost), 0) AS product_cost,
+            COALESCE(SUM(o.shipping_cost), 0) AS shipping
+        FROM orders o
+        JOIN order_items oi
+            ON o.order_id = oi.order_id
+        GROUP BY o.source
+        ORDER BY revenue DESC;
+    """)
+
+    results = cursor.fetchall()
+
+    channels_data = []
+
+    for row in results:
+        source = row[0]
+        total_orders = row[1]
+        revenue = float(row[2])
+        product_cost = float(row[3])
+        shipping = float(row[4])
+
+        profit_before_ads = revenue - product_cost - shipping
+
+        channels_data.append({
+            "source": source,
+            "total_orders": total_orders,
+            "revenue": revenue,
+            "product_cost": product_cost,
+            "shipping": shipping,
+            "profit_before_ads": profit_before_ads
+        })
+
+    cursor.close()
+    connection.close()
+
+    return {"channels": channels_data}
