@@ -319,3 +319,52 @@ def get_channel_profit():
     connection.close()
 
     return {"channels": channels_data}
+
+@app.get("/analytics/daily")
+def get_daily_metrics():
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT
+            DATE(o.order_date) AS date,
+            COUNT(DISTINCT o.order_id) AS orders,
+            COALESCE(
+                SUM((oi.quantity * oi.unit_price) - oi.discount_amount),
+                0
+            ) AS revenue,
+            COALESCE(SUM(oi.quantity * oi.unit_cost), 0) AS product_cost,
+            COALESCE(SUM(o.shipping_cost), 0) AS shipping
+        FROM orders o
+        JOIN order_items oi
+            ON o.order_id = oi.order_id
+        GROUP BY DATE(o.order_date)
+        ORDER BY date DESC;
+    """)
+
+    results = cursor.fetchall()
+
+    daily_data = []
+
+    for row in results:
+        date = row[0]
+        orders = row[1]
+        revenue = float(row[2])
+        product_cost = float(row[3])
+        shipping = float(row[4])
+
+        profit_before_ads = revenue - product_cost - shipping
+
+        daily_data.append({
+            "date": date,
+            "orders": orders,
+            "revenue": revenue,
+            "product_cost": product_cost,
+            "shipping": shipping,
+            "profit_before_ads": profit_before_ads
+        })
+
+    cursor.close()
+    connection.close()
+
+    return {"daily": daily_data}
