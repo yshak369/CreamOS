@@ -156,3 +156,44 @@ def get_expenses():
     connection.close()
 
     return {"expenses": expenses_data}
+
+@app.get("/analytics/summary")
+def get_analytics_summary():
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT
+            COALESCE(SUM((oi.quantity * oi.unit_price) - oi.discount_amount), 0) AS revenue,
+            COALESCE(SUM(oi.quantity * oi.unit_cost), 0) AS product_cost,
+            COALESCE(SUM(o.shipping_cost), 0) AS shipping,
+            COALESCE(
+                (SELECT SUM(amount)
+                 FROM expenses
+                 WHERE category = 'Meta Ads'),
+                0
+            ) AS ads
+        FROM orders o
+        JOIN order_items oi
+            ON o.order_id = oi.order_id;
+    """)
+
+    result = cursor.fetchone()
+
+    revenue = float(result[0])
+    product_cost = float(result[1])
+    shipping = float(result[2])
+    ads = float(result[3])
+
+    net_profit = revenue - product_cost - shipping - ads
+
+    cursor.close()
+    connection.close()
+
+    return {
+        "revenue": revenue,
+        "product_cost": product_cost,
+        "shipping": shipping,
+        "ads": ads,
+        "net_profit": net_profit
+    }
