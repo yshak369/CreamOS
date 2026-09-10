@@ -197,3 +197,34 @@ def get_analytics_summary():
         "ads": ads,
         "net_profit": net_profit
     }
+
+@app.get("/analytics/orders")
+def get_order_metrics():
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT
+            COUNT(DISTINCT o.order_id) AS total_orders,
+            COALESCE(
+                SUM((oi.quantity * oi.unit_price) - oi.discount_amount)
+                / NULLIF(COUNT(DISTINCT o.order_id), 0),
+                0
+            ) AS average_order_value
+        FROM orders o
+        JOIN order_items oi
+            ON o.order_id = oi.order_id;
+    """)
+
+    result = cursor.fetchone()
+
+    total_orders = result[0]
+    average_order_value = float(result[1])
+
+    cursor.close()
+    connection.close()
+
+    return {
+        "total_orders": total_orders,
+        "average_order_value": average_order_value
+    }
