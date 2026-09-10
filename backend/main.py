@@ -228,3 +228,48 @@ def get_order_metrics():
         "total_orders": total_orders,
         "average_order_value": average_order_value
     }
+
+@app.get("/analytics/channels")
+def get_channel_metrics():
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT
+            o.source,
+            COUNT(DISTINCT o.order_id) AS total_orders,
+            COALESCE(
+                SUM((oi.quantity * oi.unit_price) - oi.discount_amount),
+                0
+            ) AS revenue
+        FROM orders o
+        JOIN order_items oi
+            ON o.order_id = oi.order_id
+        GROUP BY o.source
+        ORDER BY revenue DESC;
+    """)
+
+    results = cursor.fetchall()
+
+    channels_data = []
+
+    for row in results:
+        source = row[0]
+        total_orders = row[1]
+        revenue = float(row[2])
+
+        average_order_value = (
+            revenue / total_orders if total_orders > 0 else 0
+        )
+
+        channels_data.append({
+            "source": source,
+            "total_orders": total_orders,
+            "revenue": revenue,
+            "average_order_value": average_order_value
+        })
+
+    cursor.close()
+    connection.close()
+
+    return {"channels": channels_data}
