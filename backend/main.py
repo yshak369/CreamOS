@@ -94,6 +94,7 @@ def get_customers():
 
 @app.get("/products")
 def get_products():
+
     connection = get_connection()
     cursor = connection.cursor()
 
@@ -123,6 +124,44 @@ def get_products():
     connection.close()
 
     return {"products": products_data}
+
+@app.get("/payments")
+def get_payments():
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            payment_id,
+            order_id,
+            amount,
+            payment_method,
+            payment_status,
+            gateway,
+            transaction_id,
+            gateway_fee
+        FROM payments
+        ORDER BY payment_id;
+    """)
+
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    return [
+        {
+            "payment_id": row[0],
+            "order_id": row[1],
+            "amount": float(row[2]),
+            "payment_method": row[3],
+            "payment_status": row[4],
+            "gateway": row[5],
+            "transaction_id": row[6],
+            "gateway_fee": float(row[7]) if row[7] is not None else 0
+        }
+        for row in rows
+    ]
 
 @app.get("/expenses")
 def get_expenses():
