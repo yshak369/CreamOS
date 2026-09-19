@@ -212,7 +212,13 @@ def get_analytics_summary():
                  FROM expenses
                  WHERE category = 'Meta Ads'),
                 0
-            ) AS ads
+            ) AS ads,
+            COALESCE(
+                (SELECT SUM(gateway_fee)
+                 FROM payments
+                 WHERE payment_status = 'Paid'),
+                0
+            ) AS payment_fees
         FROM orders o
         JOIN order_items oi
             ON o.order_id = oi.order_id;
@@ -224,8 +230,15 @@ def get_analytics_summary():
     product_cost = float(result[1])
     shipping = float(result[2])
     ads = float(result[3])
+    payment_fees = float(result[4])
 
-    net_profit = revenue - product_cost - shipping - ads
+    net_profit = (
+        revenue
+        - product_cost
+        - shipping
+        - ads
+        - payment_fees
+    )
 
     cursor.close()
     connection.close()
@@ -235,9 +248,9 @@ def get_analytics_summary():
         "product_cost": product_cost,
         "shipping": shipping,
         "ads": ads,
+        "payment_fees": payment_fees,
         "net_profit": net_profit
     }
-
 @app.get("/analytics/orders")
 def get_order_metrics():
     connection = get_connection()
