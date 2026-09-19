@@ -198,7 +198,10 @@ def get_expenses():
     return {"expenses": expenses_data}
 
 @app.get("/analytics/summary")
-def get_analytics_summary():
+def get_analytics_summary(
+    start_date: date = None,
+    end_date: date = None
+):    
     connection = get_connection()
     cursor = connection.cursor()
 
@@ -209,29 +212,42 @@ def get_analytics_summary():
             COALESCE(SUM(o.shipping_cost), 0) AS shipping,
             COALESCE(
                 (SELECT SUM(amount)
-                 FROM expenses
-                 WHERE category = 'Meta Ads'),
+                FROM expenses
+                WHERE category = 'Meta Ads'
+                AND DATE(expense_date) >= COALESCE(%s, DATE(expense_date))
+                AND DATE(expense_date) <= COALESCE(%s, DATE(expense_date))),
                 0
             ) AS ads,
             COALESCE(
-                (SELECT SUM(gateway_fee)
-                 FROM payments
-                 WHERE payment_status = 'Paid'),
+                (SELECT SUM(p.gateway_fee)
+                FROM payments p
+                JOIN orders o2
+                    ON p.order_id = o2.order_id
+                WHERE p.payment_status = 'Paid'
+                AND DATE(o2.order_date) >= COALESCE(%s, DATE(o2.order_date))
+                AND DATE(o2.order_date) <= COALESCE(%s, DATE(o2.order_date))),
                 0
             ) AS payment_fees
         FROM orders o
-        JOIN order_items oi
-            ON o.order_id = oi.order_id
-        WHERE
-            o.order_status NOT IN ('Cancelled', 'Refunded')
-            AND EXISTS (
-                SELECT 1
-                FROM payments p
-                WHERE p.order_id = o.order_id
-                AND p.payment_status = 'Paid'
-            );
-    """)
-
+JOIN order_items oi
+    ON o.order_id = oi.order_id
+WHERE
+    o.order_status NOT IN ('Cancelled', 'Refunded')
+    AND DATE(o.order_date) >= COALESCE(%s, DATE(o.order_date))
+    AND DATE(o.order_date) <= COALESCE(%s, DATE(o.order_date))
+    AND EXISTS (
+        SELECT 1
+        FROM payments p
+        WHERE p.order_id = o.order_id
+        AND p.payment_status = 'Paid'
+    )
+ """, ( 
+     start_date,
+        end_date,
+        start_date,
+        end_date,
+        start_date,
+        end_date))
     result = cursor.fetchone()
 
     revenue = float(result[0])
