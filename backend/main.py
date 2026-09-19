@@ -221,7 +221,15 @@ def get_analytics_summary():
             ) AS payment_fees
         FROM orders o
         JOIN order_items oi
-            ON o.order_id = oi.order_id;
+            ON o.order_id = oi.order_id
+        WHERE
+            o.order_status NOT IN ('Cancelled', 'Refunded')
+            AND EXISTS (
+                SELECT 1
+                FROM payments p
+                WHERE p.order_id = o.order_id
+                AND p.payment_status = 'Paid'
+            );
     """)
 
     result = cursor.fetchone()
