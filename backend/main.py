@@ -224,6 +224,7 @@ def get_analytics_summary(
                 JOIN orders o2
                     ON p.order_id = o2.order_id
                 WHERE p.payment_status = 'Paid'
+                AND o2.order_status NOT IN ('Cancelled', 'Refunded')
                 AND DATE(o2.order_date) >= COALESCE(%s, DATE(o2.order_date))
                 AND DATE(o2.order_date) <= COALESCE(%s, DATE(o2.order_date))),
                 0
