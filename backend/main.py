@@ -1,8 +1,43 @@
 from datetime import date
 from fastapi import FastAPI
+from pydantic import BaseModel
 from .database import get_connection
 
 app = FastAPI()
+
+class CustomerCreate(BaseModel):
+    name: str
+    phone: str
+    address: str
+    pincode: str
+
+@app.post("/customers")
+def create_customer(customer: CustomerCreate):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        INSERT INTO customers (name, phone, address, pincode)
+        VALUES (%s, %s, %s, %s)
+        RETURNING customer_id;
+    """, (
+        customer.name,
+        customer.phone,
+        customer.address,
+        customer.pincode
+    ))
+
+    customer_id = cursor.fetchone()[0]
+
+    connection.commit()
+
+    cursor.close()
+    connection.close()
+
+    return {
+        "message": "Customer created successfully",
+        "customer_id": customer_id
+    }
 
 
 @app.get("/")
