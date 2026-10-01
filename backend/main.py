@@ -11,6 +11,31 @@ class CustomerCreate(BaseModel):
     address: str
     pincode: str
 
+class OrderItemCreate(BaseModel):
+    product_id: int
+    quantity: int
+    unit_price: float
+    unit_cost: float
+    discount_amount: float = 0.0
+
+class OrderCreate(BaseModel):
+    customer_id: int
+    source: str
+    payment_method: str
+    payment_status: str
+    order_status: str
+    shipping_cost: float = 50.0
+    items: list[OrderItemCreate]
+
+class PaymentCreate(BaseModel):
+    order_id: int
+    amount: float
+    payment_method: str
+    payment_status: str
+    gateway: str | None = None
+    transaction_id: str | None = None
+    gateway_fee: float = 0.0
+
 @app.post("/customers")
 def create_customer(customer: CustomerCreate):
     connection = get_connection()
@@ -39,6 +64,49 @@ def create_customer(customer: CustomerCreate):
         "customer_id": customer_id
     }
 
+@app.post("/payments")
+def create_payment(payment: PaymentCreate):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    try:
+        cursor.execute("""
+            INSERT INTO payments (
+                order_id,
+                amount,
+                payment_method,
+                payment_status,
+                gateway,
+                transaction_id,
+                gateway_fee
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING payment_id;
+        """, (
+            payment.order_id,
+            payment.amount,
+            payment.payment_method,
+            payment.payment_status,
+            payment.gateway,
+            payment.transaction_id,
+            payment.gateway_fee
+        ))
+
+        payment_id = cursor.fetchone()[0]
+        connection.commit()
+
+        return {
+            "message": "Payment recorded successfully",
+            "payment_id": payment_id
+        }
+
+    except Exception:
+        connection.rollback()
+        raise
+
+    finally:
+        cursor.close()
+        connection.close()
 
 @app.get("/")
 def home():
@@ -53,45 +121,72 @@ def test_db():
     return {"message": "PostgreSQL connection successful"}
 
 
-@app.get("/orders")
-def get_orders():
+@app.post("/orders")
+def create_order(order: OrderCreate):
     connection = get_connection()
     cursor = connection.cursor()
 
-    cursor.execute("""
-        SELECT
-            order_id,
-            customer_id,
-            order_date,
-            source,
-            payment_method,
-            payment_status,
-            order_status,
-            shipping_cost
-        FROM orders
-        ORDER BY order_date DESC;
-    """)
+    try:
+        # 1. Create the order
+        cursor.execute("""
+            INSERT INTO orders (
+                customer_id,
+                source,
+                payment_method,
+                payment_status,
+                order_status,
+                shipping_cost
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING order_id;
+        """, (
+            order.customer_id,
+            order.source,
+            order.payment_method,
+            order.payment_status,
+            order.order_status,
+            order.shipping_cost
+        ))
 
-    orders = cursor.fetchall()
+        order_id = cursor.fetchone()[0]
 
-    orders_data = []
+        # 2. Insert each product into order_items
+        for item in order.items:
+            cursor.execute("""
+                INSERT INTO order_items (
+                    order_id,
+                    product_id,
+                    quantity,
+                    unit_price,
+                    unit_cost,
+                    discount_amount
+                )
+                VALUES (%s, %s, %s, %s, %s, %s);
+            """, (
+                order_id,
+                item.product_id,
+                item.quantity,
+                item.unit_price,
+                item.unit_cost,
+                item.discount_amount
+            ))
 
-    for order in orders:
-        orders_data.append({
-            "order_id": order[0],
-            "customer_id": order[1],
-            "order_date": order[2],
-            "source": order[3],
-            "payment_method": order[4],
-            "payment_status": order[5],
-            "order_status": order[6],
-            "shipping_cost": float(order[7])
-        })
+        # 3. Save everything together
+        connection.commit()
 
-    cursor.close()
-    connection.close()
+        return {
+            "message": "Order created successfully",
+            "order_id": order_id,
+            "items_added": len(order.items)
+        }
 
-    return {"orders": orders_data}
+    except Exception:
+        connection.rollback()
+        raise
+
+    finally:
+        cursor.close()
+        connection.close()
 
 @app.get("/customers")
 def get_customers():
