@@ -2,6 +2,7 @@ from datetime import date
 from fastapi import FastAPI
 from pydantic import BaseModel
 from .database import get_connection
+from fastapi import FastAPI, HTTPException
 
 app = FastAPI()
 
@@ -26,7 +27,17 @@ class PaymentCreate(BaseModel):
     gateway: str | None = None
     transaction_id: str | None = None
     gateway_fee: float = 0.0
-    
+
+
+class OrderPaymentCreate(BaseModel):
+    amount: float
+    payment_method: str
+    payment_status: str
+    gateway: str | None = None
+    transaction_id: str | None = None
+    gateway_fee: float = 0.0
+
+
 class OrderCreate(BaseModel):
     customer_id: int
     source: str
@@ -35,7 +46,7 @@ class OrderCreate(BaseModel):
     order_status: str
     shipping_cost: float = 50.0
     items: list[OrderItemCreate]
-    payment: PaymentCreate | None = None
+    payment: OrderPaymentCreate | None = None
 
 
 
@@ -131,7 +142,28 @@ def create_order(order: OrderCreate):
     cursor = connection.cursor()
 
     try:
-        # 1. Create the order
+        # 1. Calculate expected order total
+        expected_amount = round(
+            sum(
+                (item.quantity * item.unit_price)
+                - item.discount_amount
+                for item in order.items
+            ),
+            2
+        )
+
+        # 2. Validate prepaid payment amount
+        if (
+            order.payment is not None
+            and order.payment.payment_status == "Paid"
+            and round(order.payment.amount, 2) != expected_amount
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Incorrect payment amount. Expected ₹{expected_amount:.2f}"
+            )
+
+    # 3. Create the order
         cursor.execute("""
             INSERT INTO orders (
                 customer_id,
