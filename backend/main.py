@@ -18,15 +18,6 @@ class OrderItemCreate(BaseModel):
     unit_cost: float
     discount_amount: float = 0.0
 
-class OrderCreate(BaseModel):
-    customer_id: int
-    source: str
-    payment_method: str
-    payment_status: str
-    order_status: str
-    shipping_cost: float = 50.0
-    items: list[OrderItemCreate]
-
 class PaymentCreate(BaseModel):
     order_id: int
     amount: float
@@ -35,6 +26,18 @@ class PaymentCreate(BaseModel):
     gateway: str | None = None
     transaction_id: str | None = None
     gateway_fee: float = 0.0
+    
+class OrderCreate(BaseModel):
+    customer_id: int
+    source: str
+    payment_method: str
+    payment_status: str
+    order_status: str
+    shipping_cost: float = 50.0
+    items: list[OrderItemCreate]
+    payment: PaymentCreate | None = None
+
+
 
 @app.post("/customers")
 def create_customer(customer: CustomerCreate):
@@ -121,6 +124,7 @@ def test_db():
     return {"message": "PostgreSQL connection successful"}
 
 
+
 @app.post("/orders")
 def create_order(order: OrderCreate):
     connection = get_connection()
@@ -150,7 +154,7 @@ def create_order(order: OrderCreate):
 
         order_id = cursor.fetchone()[0]
 
-        # 2. Insert each product into order_items
+        # 2. Add the products
         for item in order.items:
             cursor.execute("""
                 INSERT INTO order_items (
@@ -171,13 +175,44 @@ def create_order(order: OrderCreate):
                 item.discount_amount
             ))
 
-        # 3. Save everything together
+        # 3. Record payment only when supplied
+        if order.payment is not None:
+            payment = order.payment
+
+            cursor.execute("""
+                INSERT INTO payments (
+                    order_id,
+                    amount,
+                    payment_method,
+                    payment_status,
+                    gateway,
+                    transaction_id,
+                    gateway_fee
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING payment_id;
+            """, (
+                order_id,
+                payment.amount,
+                payment.payment_method,
+                payment.payment_status,
+                payment.gateway,
+                payment.transaction_id,
+                payment.gateway_fee
+            ))
+
+            payment_id = cursor.fetchone()[0]
+        else:
+            payment_id = None
+
+        # 4. Commit everything together
         connection.commit()
 
         return {
             "message": "Order created successfully",
             "order_id": order_id,
-            "items_added": len(order.items)
+            "items_added": len(order.items),
+            "payment_id": payment_id
         }
 
     except Exception:
@@ -187,6 +222,7 @@ def create_order(order: OrderCreate):
     finally:
         cursor.close()
         connection.close()
+
 
 @app.get("/customers")
 def get_customers():
