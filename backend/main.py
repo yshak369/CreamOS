@@ -162,6 +162,16 @@ def create_order(order: OrderCreate):
                 detail=f"Incorrect payment amount. Expected ₹{expected_amount:.2f}"
             )
 
+        # Prevent paid orders without a payment record
+        if (
+            order.payment is None
+            and order.payment_status == "Paid"
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="A payment record is required for paid orders."
+            )
+
         # 3. Determine payment status
         if order.payment is not None:
             order_payment_status = order.payment.payment_status
