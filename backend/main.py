@@ -642,3 +642,51 @@ def get_daily_metrics(start_date: date = None, end_date: date = None):
     connection.close()
 
     return {"daily": daily_data}
+
+
+@app.get("/analytics/orders")
+def get_order_metrics():
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    try:
+        cursor.execute("""
+            WITH valid_orders AS (
+                SELECT o.order_id
+                FROM orders o
+                WHERE o.order_status NOT IN ('Cancelled', 'Refunded')
+                  AND EXISTS (
+                      SELECT 1
+                      FROM payments p
+                      WHERE p.order_id = o.order_id
+                        AND p.payment_status = 'Paid'
+                  )
+            ),
+            order_totals AS (
+                SELECT
+                    vo.order_id,
+                    SUM(
+                        (oi.quantity * oi.unit_price)
+                        - oi.discount_amount
+                    ) AS revenue
+                FROM valid_orders vo
+                JOIN order_items oi
+                    ON oi.order_id = vo.order_id
+                GROUP BY vo.order_id
+            )
+            SELECT
+                COUNT(*),
+                COALESCE(AVG(revenue), 0)
+            FROM order_totals;
+        """)
+
+        result = cursor.fetchone()
+
+        return {
+            "total_orders": result[0],
+            "average_order_value": round(float(result[1]), 2)
+        }
+
+    finally:
+        cursor.close()
+        connection.close()
