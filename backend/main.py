@@ -398,115 +398,106 @@ def get_expenses():
 
     return {"expenses": expenses_data}
 
+
 @app.get("/analytics/summary")
 def get_analytics_summary(
     start_date: date = None,
     end_date: date = None
-):    
+):
     connection = get_connection()
     cursor = connection.cursor()
 
-    cursor.execute("""
-        SELECT
-            COALESCE(SUM((oi.quantity * oi.unit_price) - oi.discount_amount), 0) AS revenue,
-            COALESCE(SUM(oi.quantity * oi.unit_cost), 0) AS product_cost,
-            COALESCE(SUM(o.shipping_cost), 0) AS shipping,
-            COALESCE(
-                (SELECT SUM(amount)
+    try:
+        cursor.execute("""
+            WITH valid_orders AS (
+                SELECT
+                    o.order_id,
+                    o.order_date,
+                    o.shipping_cost
+                FROM orders o
+                WHERE o.order_status NOT IN ('Cancelled', 'Refunded')
+                  AND (%s IS NULL OR DATE(o.order_date) >= %s)
+                  AND (%s IS NULL OR DATE(o.order_date) <= %s)
+                  AND EXISTS (
+                      SELECT 1
+                      FROM payments p
+                      WHERE p.order_id = o.order_id
+                        AND p.payment_status = 'Paid'
+                  )
+            ),
+            order_totals AS (
+                SELECT
+                    vo.order_id,
+                    vo.shipping_cost,
+                    COALESCE(
+                        SUM(
+                            (oi.quantity * oi.unit_price)
+                            - oi.discount_amount
+                        ), 0
+                    ) AS revenue,
+                    COALESCE(
+                        SUM(oi.quantity * oi.unit_cost), 0
+                    ) AS product_cost
+                FROM valid_orders vo
+                JOIN order_items oi ON oi.order_id = vo.order_id
+                GROUP BY vo.order_id, vo.shipping_cost
+            ),
+            ads_total AS (
+                SELECT COALESCE(SUM(amount), 0) AS ads
                 FROM expenses
                 WHERE category = 'Meta Ads'
-                AND DATE(expense_date) >= COALESCE(%s, DATE(expense_date))
-                AND DATE(expense_date) <= COALESCE(%s, DATE(expense_date))),
-                0
-            ) AS ads,
-            COALESCE(
-                (SELECT SUM(p.gateway_fee)
+                  AND (%s IS NULL OR DATE(expense_date) >= %s)
+                  AND (%s IS NULL OR DATE(expense_date) <= %s)
+            ),
+            fees_total AS (
+                SELECT COALESCE(SUM(p.gateway_fee), 0) AS payment_fees
                 FROM payments p
-                JOIN orders o2
-                    ON p.order_id = o2.order_id
+                JOIN valid_orders vo ON vo.order_id = p.order_id
                 WHERE p.payment_status = 'Paid'
-                AND o2.order_status NOT IN ('Cancelled', 'Refunded')
-                AND DATE(o2.order_date) >= COALESCE(%s, DATE(o2.order_date))
-                AND DATE(o2.order_date) <= COALESCE(%s, DATE(o2.order_date))),
-                0
-            ) AS payment_fees
-        FROM orders o
-JOIN order_items oi
-    ON o.order_id = oi.order_id
-WHERE
-    o.order_status NOT IN ('Cancelled', 'Refunded')
-    AND DATE(o.order_date) >= COALESCE(%s, DATE(o.order_date))
-    AND DATE(o.order_date) <= COALESCE(%s, DATE(o.order_date))
-    AND EXISTS (
-        SELECT 1
-        FROM payments p
-        WHERE p.order_id = o.order_id
-        AND p.payment_status = 'Paid'
-    )
- """, ( 
-     start_date,
-        end_date,
-        start_date,
-        end_date,
-        start_date,
-        end_date))
-    result = cursor.fetchone()
+            )
+            SELECT
+                COALESCE(SUM(ot.revenue), 0),
+                COALESCE(SUM(ot.product_cost), 0),
+                COALESCE(SUM(ot.shipping_cost), 0),
+                (SELECT ads FROM ads_total),
+                (SELECT payment_fees FROM fees_total)
+            FROM order_totals ot;
+        """, (
+            start_date, start_date,
+            end_date, end_date,
+            start_date, start_date,
+            end_date, end_date
+        ))
 
-    revenue = float(result[0])
-    product_cost = float(result[1])
-    shipping = float(result[2])
-    ads = float(result[3])
-    payment_fees = float(result[4])
+        result = cursor.fetchone()
 
-    net_profit = (
-        revenue
-        - product_cost
-        - shipping
-        - ads
-        - payment_fees
-    )
+        revenue = float(result[0])
+        product_cost = float(result[1])
+        shipping = float(result[2])
+        ads = float(result[3])
+        payment_fees = float(result[4])
 
-    cursor.close()
-    connection.close()
+        net_profit = (
+            revenue
+            - product_cost
+            - shipping
+            - ads
+            - payment_fees
+        )
 
-    return {
-        "revenue": revenue,
-        "product_cost": product_cost,
-        "shipping": shipping,
-        "ads": ads,
-        "payment_fees": payment_fees,
-        "net_profit": net_profit
-    }
-@app.get("/analytics/orders")
-def get_order_metrics():
-    connection = get_connection()
-    cursor = connection.cursor()
+        return {
+            "revenue": revenue,
+            "product_cost": product_cost,
+            "shipping": shipping,
+            "ads": ads,
+            "payment_fees": payment_fees,
+            "net_profit": net_profit
+        }
 
-    cursor.execute("""
-        SELECT
-            COUNT(DISTINCT o.order_id) AS total_orders,
-            COALESCE(
-                SUM((oi.quantity * oi.unit_price) - oi.discount_amount)
-                / NULLIF(COUNT(DISTINCT o.order_id), 0),
-                0
-            ) AS average_order_value
-        FROM orders o
-        JOIN order_items oi
-            ON o.order_id = oi.order_id;
-    """)
+    finally:
+        cursor.close()
+        connection.close()
 
-    result = cursor.fetchone()
-
-    total_orders = result[0]
-    average_order_value = float(result[1])
-
-    cursor.close()
-    connection.close()
-
-    return {
-        "total_orders": total_orders,
-        "average_order_value": average_order_value
-    }
 
 @app.get("/analytics/channels")
 def get_channel_metrics():
