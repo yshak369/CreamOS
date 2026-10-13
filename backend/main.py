@@ -145,14 +145,13 @@ def create_order(order: OrderCreate):
         # 1. Calculate expected order total
         expected_amount = round(
             sum(
-                (item.quantity * item.unit_price)
-                - item.discount_amount
+                item.quantity * item.unit_price - item.discount_amount
                 for item in order.items
             ),
             2
         )
 
-        # 2. Validate prepaid payment amount
+        # 2. Validate paid payment amount
         if (
             order.payment is not None
             and order.payment.payment_status == "Paid"
@@ -163,15 +162,17 @@ def create_order(order: OrderCreate):
                 detail=f"Incorrect payment amount. Expected ₹{expected_amount:.2f}"
             )
 
-    # 3. Create the order
+        # 3. Determine payment status
+        if order.payment is not None:
+            order_payment_status = order.payment.payment_status
+        else:
+            order_payment_status = order.payment_status
+
+        # 4. Create the order
         cursor.execute("""
             INSERT INTO orders (
-                customer_id,
-                source,
-                payment_method,
-                payment_status,
-                order_status,
-                shipping_cost
+                customer_id, source, payment_method,
+                payment_status, order_status, shipping_cost
             )
             VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING order_id;
@@ -179,23 +180,19 @@ def create_order(order: OrderCreate):
             order.customer_id,
             order.source,
             order.payment_method,
-            order.payment_status,
+            order_payment_status,
             order.order_status,
             order.shipping_cost
         ))
 
         order_id = cursor.fetchone()[0]
 
-        # 2. Add the products
+        # 5. Add products
         for item in order.items:
             cursor.execute("""
                 INSERT INTO order_items (
-                    order_id,
-                    product_id,
-                    quantity,
-                    unit_price,
-                    unit_cost,
-                    discount_amount
+                    order_id, product_id, quantity,
+                    unit_price, unit_cost, discount_amount
                 )
                 VALUES (%s, %s, %s, %s, %s, %s);
             """, (
@@ -207,18 +204,16 @@ def create_order(order: OrderCreate):
                 item.discount_amount
             ))
 
-        # 3. Record payment only when supplied
+        # 6. Add payment if supplied
+        payment_id = None
+
         if order.payment is not None:
             payment = order.payment
 
             cursor.execute("""
                 INSERT INTO payments (
-                    order_id,
-                    amount,
-                    payment_method,
-                    payment_status,
-                    gateway,
-                    transaction_id,
+                    order_id, amount, payment_method,
+                    payment_status, gateway, transaction_id,
                     gateway_fee
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -234,10 +229,8 @@ def create_order(order: OrderCreate):
             ))
 
             payment_id = cursor.fetchone()[0]
-        else:
-            payment_id = None
 
-        # 4. Commit everything together
+        # 7. Commit all changes
         connection.commit()
 
         return {
