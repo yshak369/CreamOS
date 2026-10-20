@@ -499,50 +499,66 @@ def get_analytics_summary(
         connection.close()
 
 
+
 @app.get("/analytics/channels")
 def get_channel_metrics():
     connection = get_connection()
     cursor = connection.cursor()
 
-    cursor.execute("""
-        SELECT
-            o.source,
-            COUNT(DISTINCT o.order_id) AS total_orders,
-            COALESCE(
-                SUM((oi.quantity * oi.unit_price) - oi.discount_amount),
-                0
-            ) AS revenue
-        FROM orders o
-        JOIN order_items oi
-            ON o.order_id = oi.order_id
-        GROUP BY o.source
-        ORDER BY revenue DESC;
-    """)
+    try:
+        cursor.execute("""
+            WITH valid_orders AS (
+                SELECT o.order_id, o.source
+                FROM orders o
+                WHERE o.order_status NOT IN ('Cancelled', 'Refunded')
+                  AND EXISTS (
+                      SELECT 1
+                      FROM payments p
+                      WHERE p.order_id = o.order_id
+                        AND p.payment_status = 'Paid'
+                  )
+            ),
+            order_totals AS (
+                SELECT
+                    vo.order_id,
+                    vo.source,
+                    SUM(
+                        (oi.quantity * oi.unit_price)
+                        - oi.discount_amount
+                    ) AS revenue
+                FROM valid_orders vo
+                JOIN order_items oi
+                    ON oi.order_id = vo.order_id
+                GROUP BY vo.order_id, vo.source
+            )
+            SELECT
+                source,
+                COUNT(*) AS total_orders,
+                COALESCE(SUM(revenue), 0) AS revenue,
+                COALESCE(AVG(revenue), 0) AS average_order_value
+            FROM order_totals
+            GROUP BY source
+            ORDER BY revenue DESC;
+        """)
 
-    results = cursor.fetchall()
+        results = cursor.fetchall()
 
-    channels_data = []
+        channels_data = []
 
-    for row in results:
-        source = row[0]
-        total_orders = row[1]
-        revenue = float(row[2])
+        for row in results:
+            channels_data.append({
+                "source": row[0],
+                "total_orders": row[1],
+                "revenue": float(row[2]),
+                "average_order_value": round(float(row[3]), 2)
+            })
 
-        average_order_value = (
-            revenue / total_orders if total_orders > 0 else 0
-        )
+        return {"channels": channels_data}
 
-        channels_data.append({
-            "source": source,
-            "total_orders": total_orders,
-            "revenue": revenue,
-            "average_order_value": average_order_value
-        })
+    finally:
+        cursor.close()
+        connection.close()
 
-    cursor.close()
-    connection.close()
-
-    return {"channels": channels_data}
 
 @app.get("/analytics/channel-profit")
 def get_channel_profit():
