@@ -399,8 +399,9 @@ def get_expenses():
     return {"expenses": expenses_data}
 
 
-@app.get("/analytics/summary")
-def get_analytics_summary(
+
+@app.get("/analytics/monthly")
+def get_monthly_analytics(
     start_date: date = None,
     end_date: date = None
 ):
@@ -428,6 +429,7 @@ def get_analytics_summary(
             order_totals AS (
                 SELECT
                     vo.order_id,
+                    vo.order_date,
                     vo.shipping_cost,
                     COALESCE(
                         SUM(
@@ -440,28 +442,58 @@ def get_analytics_summary(
                     ) AS product_cost
                 FROM valid_orders vo
                 JOIN order_items oi ON oi.order_id = vo.order_id
-                GROUP BY vo.order_id, vo.shipping_cost
+                GROUP BY
+                    vo.order_id,
+                    vo.order_date,
+                    vo.shipping_cost
             ),
-            ads_total AS (
-                SELECT COALESCE(SUM(amount), 0) AS ads
+            monthly_orders AS (
+                SELECT
+                    DATE_TRUNC('month', order_date)::date AS month,
+                    COUNT(DISTINCT order_id) AS orders,
+                    SUM(revenue) AS revenue,
+                    SUM(product_cost) AS product_cost,
+                    SUM(shipping_cost) AS shipping
+                FROM order_totals
+                GROUP BY DATE_TRUNC('month', order_date)::date
+            ),
+            monthly_ads AS (
+                SELECT
+                    DATE_TRUNC('month', expense_date)::date AS month,
+                    SUM(amount) AS ads
                 FROM expenses
                 WHERE category = 'Meta Ads'
                   AND (%s IS NULL OR DATE(expense_date) >= %s)
                   AND (%s IS NULL OR DATE(expense_date) <= %s)
+                GROUP BY DATE_TRUNC('month', expense_date)::date
             ),
-            fees_total AS (
-                SELECT COALESCE(SUM(p.gateway_fee), 0) AS payment_fees
-                FROM payments p
-                JOIN valid_orders vo ON vo.order_id = p.order_id
+            monthly_fees AS (
+                SELECT
+                    DATE_TRUNC('month', vo.order_date)::date AS month,
+                    SUM(p.gateway_fee) AS payment_fees
+                FROM valid_orders vo
+                JOIN payments p ON p.order_id = vo.order_id
                 WHERE p.payment_status = 'Paid'
+                GROUP BY DATE_TRUNC('month', vo.order_date)::date
+            ),
+            report_months AS (
+                SELECT month FROM monthly_orders
+                UNION
+                SELECT month FROM monthly_ads
             )
             SELECT
-                COALESCE(SUM(ot.revenue), 0),
-                COALESCE(SUM(ot.product_cost), 0),
-                COALESCE(SUM(ot.shipping_cost), 0),
-                (SELECT ads FROM ads_total),
-                (SELECT payment_fees FROM fees_total)
-            FROM order_totals ot;
+                rm.month,
+                COALESCE(mo.orders, 0),
+                COALESCE(mo.revenue, 0),
+                COALESCE(mo.product_cost, 0),
+                COALESCE(mo.shipping, 0),
+                COALESCE(ma.ads, 0),
+                COALESCE(mf.payment_fees, 0)
+            FROM report_months rm
+            LEFT JOIN monthly_orders mo ON mo.month = rm.month
+            LEFT JOIN monthly_ads ma ON ma.month = rm.month
+            LEFT JOIN monthly_fees mf ON mf.month = rm.month
+            ORDER BY rm.month DESC;
         """, (
             start_date, start_date,
             end_date, end_date,
@@ -469,35 +501,42 @@ def get_analytics_summary(
             end_date, end_date
         ))
 
-        result = cursor.fetchone()
+        results = cursor.fetchall()
+        monthly_data = []
 
-        revenue = float(result[0])
-        product_cost = float(result[1])
-        shipping = float(result[2])
-        ads = float(result[3])
-        payment_fees = float(result[4])
+        for row in results:
+            month = row[0]
+            orders = row[1]
+            revenue = float(row[2])
+            product_cost = float(row[3])
+            shipping = float(row[4])
+            ads = float(row[5])
+            payment_fees = float(row[6])
 
-        net_profit = (
-            revenue
-            - product_cost
-            - shipping
-            - ads
-            - payment_fees
-        )
+            net_profit = (
+                revenue
+                - product_cost
+                - shipping
+                - ads
+                - payment_fees
+            )
 
-        return {
-            "revenue": revenue,
-            "product_cost": product_cost,
-            "shipping": shipping,
-            "ads": ads,
-            "payment_fees": payment_fees,
-            "net_profit": net_profit
-        }
+            monthly_data.append({
+                "month": month.strftime("%Y-%m"),
+                "orders": orders,
+                "revenue": revenue,
+                "product_cost": product_cost,
+                "shipping": shipping,
+                "ads": ads,
+                "payment_fees": payment_fees,
+                "net_profit": net_profit
+            })
+
+        return {"monthly": monthly_data}
 
     finally:
         cursor.close()
         connection.close()
-
 
 
 @app.get("/analytics/channels")
