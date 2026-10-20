@@ -991,3 +991,86 @@ def get_customer_analytics(
         cursor.close()
         connection.close()
 
+
+
+@app.get("/analytics/customer-retention")
+def get_customer_retention(
+    start_date: date = None,
+    end_date: date = None
+):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    try:
+        cursor.execute("""
+            WITH valid_orders AS (
+                SELECT
+                    o.order_id,
+                    o.customer_id,
+                    o.order_date
+                FROM orders o
+                WHERE o.order_status NOT IN ('Cancelled', 'Refunded')
+                  AND (%s IS NULL OR DATE(o.order_date) >= %s)
+                  AND (%s IS NULL OR DATE(o.order_date) <= %s)
+                  AND EXISTS (
+                      SELECT 1
+                      FROM payments p
+                      WHERE p.order_id = o.order_id
+                        AND p.payment_status = 'Paid'
+                  )
+            ),
+            order_totals AS (
+                SELECT
+                    vo.order_id,
+                    vo.customer_id,
+                    SUM(
+                        (oi.quantity * oi.unit_price)
+                        - oi.discount_amount
+                    ) AS revenue
+                FROM valid_orders vo
+                JOIN order_items oi ON oi.order_id = vo.order_id
+                GROUP BY vo.order_id, vo.customer_id
+            ),
+            customer_summary AS (
+                SELECT
+                    customer_id,
+                    COUNT(*) AS total_orders,
+                    SUM(revenue) AS lifetime_revenue
+                FROM order_totals
+                GROUP BY customer_id
+            )
+            SELECT
+                COUNT(*) AS total_customers,
+                COUNT(*) FILTER (
+                    WHERE total_orders > 1
+                ) AS repeat_customers,
+                COALESCE(SUM(lifetime_revenue), 0) AS total_revenue
+            FROM customer_summary;
+        """, (
+            start_date, start_date,
+            end_date, end_date
+        ))
+
+        result = cursor.fetchone()
+
+        total_customers = int(result[0])
+        repeat_customers = int(result[1])
+        total_revenue = float(result[2])
+
+        repeat_customer_rate = (
+            round(repeat_customers / total_customers * 100, 2)
+            if total_customers > 0 else 0
+        )
+
+        return {
+            "total_customers": total_customers,
+            "repeat_customers": repeat_customers,
+            "one_time_customers": total_customers - repeat_customers,
+            "repeat_customer_rate_percentage": repeat_customer_rate,
+            "total_customer_revenue": total_revenue
+        }
+
+    finally:
+        cursor.close()
+        connection.close()
+
