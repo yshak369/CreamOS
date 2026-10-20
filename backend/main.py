@@ -921,3 +921,73 @@ def get_product_analytics(
         cursor.close()
         connection.close()
 
+
+
+@app.get("/analytics/customers")
+def get_customer_analytics(
+    start_date: date = None,
+    end_date: date = None
+):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    try:
+        cursor.execute("""
+            WITH valid_orders AS (
+                SELECT o.order_id, o.customer_id, o.order_date
+                FROM orders o
+                WHERE o.order_status NOT IN ('Cancelled', 'Refunded')
+                  AND (%s IS NULL OR DATE(o.order_date) >= %s)
+                  AND (%s IS NULL OR DATE(o.order_date) <= %s)
+                  AND EXISTS (
+                      SELECT 1
+                      FROM payments p
+                      WHERE p.order_id = o.order_id
+                        AND p.payment_status = 'Paid'
+                  )
+            ),
+            order_totals AS (
+                SELECT
+                    vo.order_id,
+                    vo.customer_id,
+                    SUM(
+                        (oi.quantity * oi.unit_price)
+                        - oi.discount_amount
+                    ) AS revenue
+                FROM valid_orders vo
+                JOIN order_items oi ON oi.order_id = vo.order_id
+                GROUP BY vo.order_id, vo.customer_id
+            )
+            SELECT
+                c.customer_id,
+                c.name,
+                COUNT(ot.order_id) AS total_orders,
+                COALESCE(SUM(ot.revenue), 0) AS revenue,
+                COALESCE(AVG(ot.revenue), 0) AS average_order_value
+            FROM order_totals ot
+            JOIN customers c ON c.customer_id = ot.customer_id
+            GROUP BY c.customer_id, c.name
+            ORDER BY revenue DESC;
+        """, (
+            start_date, start_date,
+            end_date, end_date
+        ))
+
+        results = cursor.fetchall()
+        customers_data = []
+
+        for row in results:
+            customers_data.append({
+                "customer_id": row[0],
+                "customer": row[1],
+                "total_orders": int(row[2]),
+                "revenue": float(row[3]),
+                "average_order_value": round(float(row[4]), 2)
+            })
+
+        return {"customers": customers_data}
+
+    finally:
+        cursor.close()
+        connection.close()
+
