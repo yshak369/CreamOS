@@ -640,6 +640,7 @@ def get_channel_profit():
 
 
 
+
 @app.get("/analytics/daily")
 def get_daily_metrics(start_date: date = None, end_date: date = None):
     connection = get_connection()
@@ -680,17 +681,47 @@ def get_daily_metrics(start_date: date = None, end_date: date = None):
                     vo.order_id,
                     DATE(vo.order_date),
                     vo.shipping_cost
+            ),
+            daily_orders AS (
+                SELECT
+                    date,
+                    COUNT(*) AS orders,
+                    SUM(revenue) AS revenue,
+                    SUM(product_cost) AS product_cost,
+                    SUM(shipping_cost) AS shipping
+                FROM order_totals
+                GROUP BY date
+            ),
+            daily_ads AS (
+                SELECT
+                    DATE(expense_date) AS date,
+                    SUM(amount) AS ads
+                FROM expenses
+                WHERE category = 'Meta Ads'
+                  AND (%s IS NULL OR DATE(expense_date) >= %s)
+                  AND (%s IS NULL OR DATE(expense_date) <= %s)
+                GROUP BY DATE(expense_date)
+            ),
+            report_dates AS (
+                SELECT date FROM daily_orders
+                UNION
+                SELECT date FROM daily_ads
             )
             SELECT
-                date,
-                COUNT(*) AS orders,
-                COALESCE(SUM(revenue), 0) AS revenue,
-                COALESCE(SUM(product_cost), 0) AS product_cost,
-                COALESCE(SUM(shipping_cost), 0) AS shipping
-            FROM order_totals
-            GROUP BY date
-            ORDER BY date DESC;
+                rd.date,
+                COALESCE(daily_order_totals.orders, 0),
+                COALESCE(daily_order_totals.revenue, 0),
+                COALESCE(daily_order_totals.product_cost, 0),
+                COALESCE(daily_order_totals.shipping, 0),
+                COALESCE(da.ads, 0)
+            FROM report_dates rd
+            LEFT JOIN daily_orders AS daily_order_totals
+                ON daily_order_totals.date = rd.date
+            LEFT JOIN daily_ads da ON da.date = rd.date
+            ORDER BY rd.date DESC;
         """, (
+            start_date, start_date,
+            end_date, end_date,
             start_date, start_date,
             end_date, end_date
         ))
@@ -699,21 +730,25 @@ def get_daily_metrics(start_date: date = None, end_date: date = None):
         daily_data = []
 
         for row in results:
-            date = row[0]
+            report_date = row[0]
             orders = row[1]
             revenue = float(row[2])
             product_cost = float(row[3])
             shipping = float(row[4])
+            ads = float(row[5])
 
             profit_before_ads = revenue - product_cost - shipping
+            net_profit = profit_before_ads - ads
 
             daily_data.append({
-                "date": date,
+                "date": report_date,
                 "orders": orders,
                 "revenue": revenue,
                 "product_cost": product_cost,
                 "shipping": shipping,
-                "profit_before_ads": profit_before_ads
+                "profit_before_ads": profit_before_ads,
+                "ads": ads,
+                "net_profit": net_profit
             })
 
         return {"daily": daily_data}
@@ -721,6 +756,7 @@ def get_daily_metrics(start_date: date = None, end_date: date = None):
     finally:
         cursor.close()
         connection.close()
+
 
 
 @app.get("/analytics/orders")
