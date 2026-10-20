@@ -844,3 +844,80 @@ def get_order_metrics():
     finally:
         cursor.close()
         connection.close()
+
+
+@app.get("/analytics/products")
+def get_product_analytics(
+    start_date: date = None,
+    end_date: date = None
+):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    try:
+        cursor.execute("""
+            WITH valid_orders AS (
+                SELECT o.order_id, o.order_date
+                FROM orders o
+                WHERE o.order_status NOT IN ('Cancelled', 'Refunded')
+                  AND (%s IS NULL OR DATE(o.order_date) >= %s)
+                  AND (%s IS NULL OR DATE(o.order_date) <= %s)
+                  AND EXISTS (
+                      SELECT 1
+                      FROM payments p
+                      WHERE p.order_id = o.order_id
+                        AND p.payment_status = 'Paid'
+                  )
+            )
+            SELECT
+                p.product_id,
+                p.name,
+                SUM(oi.quantity) AS units_sold,
+                COUNT(DISTINCT vo.order_id) AS total_orders,
+                SUM(
+                    (oi.quantity * oi.unit_price)
+                    - oi.discount_amount
+                ) AS revenue,
+                SUM(oi.quantity * oi.unit_cost) AS product_cost,
+                SUM(
+                    (oi.quantity * oi.unit_price)
+                    - oi.discount_amount
+                    - (oi.quantity * oi.unit_cost)
+                ) AS profit_before_shipping_and_ads
+            FROM valid_orders vo
+            JOIN order_items oi ON oi.order_id = vo.order_id
+            JOIN products p ON p.product_id = oi.product_id
+            GROUP BY p.product_id, p.name
+            ORDER BY revenue DESC;
+        """, (
+            start_date, start_date,
+            end_date, end_date
+        ))
+
+        results = cursor.fetchall()
+        products_data = []
+
+        for row in results:
+            revenue = float(row[4] or 0)
+            product_cost = float(row[5] or 0)
+
+            products_data.append({
+                "product_id": row[0],
+                "product": row[1],
+                "units_sold": int(row[2] or 0),
+                "total_orders": int(row[3] or 0),
+                "revenue": revenue,
+                "product_cost": product_cost,
+                "profit_before_shipping_and_ads": float(row[6] or 0),
+                "product_margin_percentage": (
+                    round((revenue - product_cost) / revenue * 100, 2)
+                    if revenue > 0 else 0
+                )
+            })
+
+        return {"products": products_data}
+
+    finally:
+        cursor.close()
+        connection.close()
+
