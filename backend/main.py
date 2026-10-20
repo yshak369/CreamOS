@@ -560,51 +560,84 @@ def get_channel_metrics():
         connection.close()
 
 
+
 @app.get("/analytics/channel-profit")
 def get_channel_profit():
     connection = get_connection()
     cursor = connection.cursor()
 
-    cursor.execute("""
-        SELECT
-            o.source,
-            COUNT(DISTINCT o.order_id) AS total_orders,
-            COALESCE(SUM((oi.quantity * oi.unit_price) - oi.discount_amount), 0) AS revenue,
-            COALESCE(SUM(oi.quantity * oi.unit_cost), 0) AS product_cost,
-            COALESCE(SUM(o.shipping_cost), 0) AS shipping
-        FROM orders o
-        JOIN order_items oi
-            ON o.order_id = oi.order_id
-        GROUP BY o.source
-        ORDER BY revenue DESC;
-    """)
+    try:
+        cursor.execute("""
+            WITH valid_orders AS (
+                SELECT
+                    o.order_id,
+                    o.source,
+                    o.shipping_cost
+                FROM orders o
+                WHERE o.order_status NOT IN ('Cancelled', 'Refunded')
+                  AND EXISTS (
+                      SELECT 1
+                      FROM payments p
+                      WHERE p.order_id = o.order_id
+                        AND p.payment_status = 'Paid'
+                  )
+            ),
+            order_totals AS (
+                SELECT
+                    vo.order_id,
+                    vo.source,
+                    vo.shipping_cost,
+                    SUM(
+                        (oi.quantity * oi.unit_price)
+                        - oi.discount_amount
+                    ) AS revenue,
+                    SUM(oi.quantity * oi.unit_cost) AS product_cost
+                FROM valid_orders vo
+                JOIN order_items oi
+                    ON oi.order_id = vo.order_id
+                GROUP BY
+                    vo.order_id,
+                    vo.source,
+                    vo.shipping_cost
+            )
+            SELECT
+                source,
+                COUNT(*) AS total_orders,
+                COALESCE(SUM(revenue), 0) AS revenue,
+                COALESCE(SUM(product_cost), 0) AS product_cost,
+                COALESCE(SUM(shipping_cost), 0) AS shipping
+            FROM order_totals
+            GROUP BY source
+            ORDER BY revenue DESC;
+        """)
 
-    results = cursor.fetchall()
+        results = cursor.fetchall()
+        channels_data = []
 
-    channels_data = []
+        for row in results:
+            source = row[0]
+            total_orders = row[1]
+            revenue = float(row[2])
+            product_cost = float(row[3])
+            shipping = float(row[4])
 
-    for row in results:
-        source = row[0]
-        total_orders = row[1]
-        revenue = float(row[2])
-        product_cost = float(row[3])
-        shipping = float(row[4])
+            profit_before_ads = revenue - product_cost - shipping
 
-        profit_before_ads = revenue - product_cost - shipping
+            channels_data.append({
+                "source": source,
+                "total_orders": total_orders,
+                "revenue": revenue,
+                "product_cost": product_cost,
+                "shipping": shipping,
+                "profit_before_ads": profit_before_ads
+            })
 
-        channels_data.append({
-            "source": source,
-            "total_orders": total_orders,
-            "revenue": revenue,
-            "product_cost": product_cost,
-            "shipping": shipping,
-            "profit_before_ads": profit_before_ads
-        })
+        return {"channels": channels_data}
 
-    cursor.close()
-    connection.close()
+    finally:
+        cursor.close()
+        connection.close()
 
-    return {"channels": channels_data}
 
 @app.get("/analytics/daily")
 def get_daily_metrics(start_date: date = None, end_date: date = None):
