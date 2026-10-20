@@ -639,58 +639,88 @@ def get_channel_profit():
         connection.close()
 
 
+
 @app.get("/analytics/daily")
 def get_daily_metrics(start_date: date = None, end_date: date = None):
     connection = get_connection()
     cursor = connection.cursor()
 
-    cursor.execute("""
-        SELECT
-            DATE(o.order_date) AS date,
-            COUNT(DISTINCT o.order_id) AS orders,
-            COALESCE(
-                SUM((oi.quantity * oi.unit_price) - oi.discount_amount),
-                0
-            ) AS revenue,
-            COALESCE(SUM(oi.quantity * oi.unit_cost), 0) AS product_cost,
-            COALESCE(SUM(o.shipping_cost), 0) AS shipping
-        FROM orders o
-        JOIN order_items oi
-            ON o.order_id = oi.order_id
-        WHERE
-            (%s IS NULL OR DATE(o.order_date) >= %s)
-            AND
-            (%s IS NULL OR DATE(o.order_date) <= %s)
-        GROUP BY DATE(o.order_date)
-        ORDER BY date DESC;
-    """, (start_date, start_date, end_date, end_date))
+    try:
+        cursor.execute("""
+            WITH valid_orders AS (
+                SELECT
+                    o.order_id,
+                    o.order_date,
+                    o.shipping_cost
+                FROM orders o
+                WHERE o.order_status NOT IN ('Cancelled', 'Refunded')
+                  AND (%s IS NULL OR DATE(o.order_date) >= %s)
+                  AND (%s IS NULL OR DATE(o.order_date) <= %s)
+                  AND EXISTS (
+                      SELECT 1
+                      FROM payments p
+                      WHERE p.order_id = o.order_id
+                        AND p.payment_status = 'Paid'
+                  )
+            ),
+            order_totals AS (
+                SELECT
+                    vo.order_id,
+                    DATE(vo.order_date) AS date,
+                    vo.shipping_cost,
+                    SUM(
+                        (oi.quantity * oi.unit_price)
+                        - oi.discount_amount
+                    ) AS revenue,
+                    SUM(oi.quantity * oi.unit_cost) AS product_cost
+                FROM valid_orders vo
+                JOIN order_items oi
+                    ON oi.order_id = vo.order_id
+                GROUP BY
+                    vo.order_id,
+                    DATE(vo.order_date),
+                    vo.shipping_cost
+            )
+            SELECT
+                date,
+                COUNT(*) AS orders,
+                COALESCE(SUM(revenue), 0) AS revenue,
+                COALESCE(SUM(product_cost), 0) AS product_cost,
+                COALESCE(SUM(shipping_cost), 0) AS shipping
+            FROM order_totals
+            GROUP BY date
+            ORDER BY date DESC;
+        """, (
+            start_date, start_date,
+            end_date, end_date
+        ))
 
-    results = cursor.fetchall()
+        results = cursor.fetchall()
+        daily_data = []
 
-    daily_data = []
+        for row in results:
+            date = row[0]
+            orders = row[1]
+            revenue = float(row[2])
+            product_cost = float(row[3])
+            shipping = float(row[4])
 
-    for row in results:
-        date = row[0]
-        orders = row[1]
-        revenue = float(row[2])
-        product_cost = float(row[3])
-        shipping = float(row[4])
+            profit_before_ads = revenue - product_cost - shipping
 
-        profit_before_ads = revenue - product_cost - shipping
+            daily_data.append({
+                "date": date,
+                "orders": orders,
+                "revenue": revenue,
+                "product_cost": product_cost,
+                "shipping": shipping,
+                "profit_before_ads": profit_before_ads
+            })
 
-        daily_data.append({
-            "date": date,
-            "orders": orders,
-            "revenue": revenue,
-            "product_cost": product_cost,
-            "shipping": shipping,
-            "profit_before_ads": profit_before_ads
-        })
+        return {"daily": daily_data}
 
-    cursor.close()
-    connection.close()
-
-    return {"daily": daily_data}
+    finally:
+        cursor.close()
+        connection.close()
 
 
 @app.get("/analytics/orders")
