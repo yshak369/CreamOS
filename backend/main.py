@@ -3,8 +3,20 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from .database import get_connection
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class CustomerCreate(BaseModel):
     name: str
@@ -1074,3 +1086,102 @@ def get_customer_retention(
         cursor.close()
         connection.close()
 
+
+@app.get("/analytics/summary")
+def get_analytics_summary(
+    start_date: date = None,
+    end_date: date = None
+):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    try:
+        cursor.execute("""
+            WITH valid_orders AS (
+                SELECT
+                    o.order_id,
+                    o.order_date,
+                    o.shipping_cost
+                FROM orders o
+                WHERE o.order_status NOT IN ('Cancelled', 'Refunded')
+                  AND (%s IS NULL OR DATE(o.order_date) >= %s)
+                  AND (%s IS NULL OR DATE(o.order_date) <= %s)
+                  AND EXISTS (
+                      SELECT 1
+                      FROM payments p
+                      WHERE p.order_id = o.order_id
+                        AND p.payment_status = 'Paid'
+                  )
+            ),
+            order_totals AS (
+                SELECT
+                    vo.order_id,
+                    vo.shipping_cost,
+                    COALESCE(
+                        SUM(
+                            (oi.quantity * oi.unit_price)
+                            - oi.discount_amount
+                        ), 0
+                    ) AS revenue,
+                    COALESCE(
+                        SUM(oi.quantity * oi.unit_cost), 0
+                    ) AS product_cost
+                FROM valid_orders vo
+                JOIN order_items oi ON oi.order_id = vo.order_id
+                GROUP BY vo.order_id, vo.shipping_cost
+            ),
+            ads_total AS (
+                SELECT COALESCE(SUM(amount), 0) AS ads
+                FROM expenses
+                WHERE category = 'Meta Ads'
+                  AND (%s IS NULL OR DATE(expense_date) >= %s)
+                  AND (%s IS NULL OR DATE(expense_date) <= %s)
+            ),
+            fees_total AS (
+                SELECT COALESCE(SUM(p.gateway_fee), 0) AS payment_fees
+                FROM payments p
+                JOIN valid_orders vo ON vo.order_id = p.order_id
+                WHERE p.payment_status = 'Paid'
+            )
+            SELECT
+                COALESCE(SUM(ot.revenue), 0),
+                COALESCE(SUM(ot.product_cost), 0),
+                COALESCE(SUM(ot.shipping_cost), 0),
+                (SELECT ads FROM ads_total),
+                (SELECT payment_fees FROM fees_total)
+            FROM order_totals ot;
+        """, (
+            start_date, start_date,
+            end_date, end_date,
+            start_date, start_date,
+            end_date, end_date
+        ))
+
+        result = cursor.fetchone()
+
+        revenue = float(result[0])
+        product_cost = float(result[1])
+        shipping = float(result[2])
+        ads = float(result[3])
+        payment_fees = float(result[4])
+
+        net_profit = (
+            revenue
+            - product_cost
+            - shipping
+            - ads
+            - payment_fees
+        )
+
+        return {
+            "revenue": revenue,
+            "product_cost": product_cost,
+            "shipping": shipping,
+            "ads": ads,
+            "payment_fees": payment_fees,
+            "net_profit": net_profit
+        }
+
+    finally:
+        cursor.close()
+        connection.close()
