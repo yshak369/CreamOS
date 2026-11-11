@@ -10,17 +10,20 @@ function App() {
 
   const [orderMetrics, setOrderMetrics] = useState(null)
   const [productMetrics, setProductMetrics] = useState(null)
+  const [customerMetrics, setCustomerMetrics] = useState(null)
 
   useEffect(() => {
   Promise.all([
     fetchAnalytics('/analytics/summary'),
     fetchAnalytics('/analytics/orders'),
     fetchAnalytics('/analytics/products'),
+    fetchAnalytics('/analytics/customer-retention'),
   ])
-    .then(([summaryData, orderData, productData]) => {
+    .then(([summaryData, orderData, productData, customerData]) => {
       setSummary(summaryData)
       setOrderMetrics(orderData)
       setProductMetrics(productData)
+      setCustomerMetrics(customerData)
     })
     .catch((err) => {
       console.error('Analytics loading failed:', err)
@@ -142,24 +145,37 @@ function App() {
               <span className="panel-icon">₹</span>
             </div>
 
-            <div className="profit-row">
-              <span>Revenue</span><strong>₹7,794</strong>
-            </div>
-            <div className="profit-row">
-              <span>Product costs</span><strong>− ₹5,000</strong>
-            </div>
-            <div className="profit-row">
-              <span>Shipping</span><strong>− ₹300</strong>
-            </div>
-            <div className="profit-row">
-              <span>Advertising</span><strong>− ₹750</strong>
-            </div>
-            <div className="profit-row">
-              <span>Payment fees</span><strong>− ₹0</strong>
-            </div>
-            <div className="profit-total">
-              <span>Net profit</span><strong>₹1,744</strong>
-            </div>
+            
+          <div className="profit-row">
+            <span>Revenue</span>
+            <strong>₹{Number(summary?.revenue ?? 0).toLocaleString('en-IN')}</strong>
+          </div>
+
+          <div className="profit-row">
+            <span>Product costs</span>
+            <strong>− ₹{Number(summary?.product_cost ?? 0).toLocaleString('en-IN')}</strong>
+          </div>
+
+          <div className="profit-row">
+            <span>Shipping</span>
+            <strong>− ₹{Number(summary?.shipping ?? 0).toLocaleString('en-IN')}</strong>
+          </div>
+
+          <div className="profit-row">
+            <span>Advertising</span>
+            <strong>− ₹{Number(summary?.ads ?? 0).toLocaleString('en-IN')}</strong>
+          </div>
+
+          <div className="profit-row">
+            <span>Payment fees</span>
+            <strong>− ₹{Number(summary?.payment_fees ?? 0).toLocaleString('en-IN')}</strong>
+          </div>
+
+          <div className="profit-total">
+            <span>Net profit</span>
+            <strong>₹{Number(summary?.net_profit ?? 0).toLocaleString('en-IN')}</strong>
+          </div>
+
           </article>
 
           <article className="panel" id="products">
@@ -172,42 +188,98 @@ function App() {
             </div>
 
             <div className="product-card">
-              <div className="product-icon">C</div>
-              <div className="product-info">
-                <strong>Cream</strong>
-                <span>10 units sold</span>
+              
+              <div className="product-card">
+                <div className="product-icon">C</div>
+                <div className="product-info">
+                  <strong>
+                    {productMetrics?.products?.[0]?.product ?? 'Loading...'}
+                  </strong>
+                  <span>
+                    {productMetrics?.products?.[0]?.units_sold ?? 0} units sold
+                  </span>
+                </div>
+                <span className="product-revenue">
+                  ₹{Number(productMetrics?.products?.[0]?.revenue ?? 0).toLocaleString('en-IN')}
+                </span>
               </div>
-              <span className="product-revenue">₹7,794</span>
+
             </div>
 
+            
             <div className="margin-label">
-              <span>Product margin</span><strong>35.85%</strong>
+              <span>Product margin</span>
+              <strong>
+                {Number(
+                  productMetrics?.products?.[0]?.product_margin_percentage ?? 0
+                ).toFixed(2)}%
+              </strong>
             </div>
+
             <div className="progress-track">
-              <div className="progress-fill" />
+              <div
+                className="progress-fill"
+                style={{
+                  width: `${Math.min(
+                    100,
+                    Math.max(
+                      0,
+                      Number(
+                        productMetrics?.products?.[0]?.product_margin_percentage ?? 0
+                      )
+                    )
+                  )}%`,
+                }}
+              />
             </div>
+
             <p className="footnote">
               Before shipping, advertising and payment fees.
             </p>
           </article>
         </section>
 
+        
         <section className="panel customer-panel" id="customers">
           <div className="panel-heading">
             <div>
               <h2>Customer retention</h2>
-              <p>Repeat purchasing in your current sample data</p>
+              <p>Repeat purchasing in your current data</p>
             </div>
-            <span className="retention-value">50%</span>
+            <span className="retention-value">
+              {Number(
+                customerMetrics?.repeat_customer_rate_percentage ?? 0
+              ).toFixed(0)}%
+            </span>
           </div>
+
           <div className="retention-track">
-            <div className="retention-fill" />
+            <div
+              className="retention-fill"
+              style={{
+                width: `${Math.min(
+                  100,
+                  Math.max(
+                    0,
+                    Number(
+                      customerMetrics?.repeat_customer_rate_percentage ?? 0
+                    )
+                  )
+                )}%`,
+              }}
+            />
           </div>
+
           <div className="retention-footer">
-            <span>1 repeat customer</span>
-            <span>2 total paying customers</span>
+            <span>
+              {customerMetrics?.repeat_customers ?? 0} repeat customers
+            </span>
+            <span>
+              {customerMetrics?.total_customers ?? 0} total customers
+            </span>
           </div>
         </section>
+
 
         <footer>
           CreamOS · Built for smarter business decisions
