@@ -27,3 +27,9 @@ Thumbs.db
 # Secrets
 secrets/
 credentials/
+
+# Keep the example env file
+!.env.example
+
+# Test cache
+.pytest_cache/
